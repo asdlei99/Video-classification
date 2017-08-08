@@ -81,15 +81,80 @@ Second, system covers every aspect of video training procedure, end-to-end train
 Third, hierarchical parts are loose coupling, which means every module can expand or shrink dynamically, which reduced system risk and performance bottleneck. And loose coupling has another important advantage, methods can be attached or detached easily, just maintaining registration table in Master node. And inside individual module, we have many choise to optimize performance, such as distributed training, map-reduced video decoding, and spark-based feature extraction.
 
 
-
 ## 3.4 Design Details
-特征提取细节
-CNN训练细节
-融合细节
+
+* Video Decoder
+Master Cluster uses random sequence generator to produce random video segment seed. The video learning system rolls data epoch by epoch. So we set sequence generator works once for an epoch, produce video segment seed before epoch begin. 
+Following class balance in training[51], we feed video with three random selection, first random choose a class id, then random a video id in choosen class, at last random a frame offset in choosen video.
+So the random sequence contains three random elements: video Class ID, video ID in current class, frame begin offset in the video; cause frame stack is always needed in following phase, it comes with another constant parameter, frame count to decode.
+Decoding rate and training rate is not matching, one decoding module may deals with multiple training, and followed by arbitrary feature extractors. So we make a independent module for decoding. This module is easy and lightweighted, and elastic to expand or shrink.
+
+The workflow of Video Decorder is (TODO):
+a) notify decoder workers are ready
+b) receive random sequence
+c) decode videos and serialize frames
+d) put into key-value store
+
+Video Decoder execute following commands from Master Cluster: start/stop/pause/resume Decoding.
+
+
+* Feature Extractor
+Feature Extractor is an open-registration module. Any appropriate extractor can be attached by registration in Master Cluster. Default feature is single video frame. Which is already extracted by video decorder. Here we take single optical flow as an example. We packed flow extractor into a docker image, the master cluster only need to maintain a feature-image table. The code in docker image are shown in Algorithm 1 (TODO), extract features and put into key-value store. This docker-based microservice framework simplified resource scheduling. To add a new extractor, we build a new image, add a record in the table. To expand specified extractor, we just change corresponding container number, and Load-Balance will take charge of rest.
+This scheme reduced our work for attching features, thus we can evaluate all features we are interested in.
+
+	* Optical FLow
+(TODO)
+	* Frame Difference Stack
+(TODO)
+	* HOF / HOG
+(TODO)
+	* MBH
+(TODO)
+	* Dense Trajectory
+(TODO)
+
+
+* Distributed Trainer
+The key factor of distributed trainer is fast. So distributed system is necessary. We also use microservice framework mentioned in extrator module to carry training systems. So Trainer-Registration Table is also needed. There are several training instances, accomodated in a heterogeneous architecture. Training instances can be single-CPU or GPU container, multi-GPU in single node, multi-GPU in distributed configuration. When instantiated, containers should be assigned with specified computing resource. However, distributed can not be assgined directly on docker level, a unified interface is built to accomodate distributed system management.
+Mainly used training framework in video learning is two-stream[11] framework. Spatial and temporal cues are trained seperately, final aggeration is carried out in next module, which we will discuss later. Spatial cue used is single frame. We implemented it in PyTorch Framework, followed ImageNet classification scheme, fine-tuned from 22k pretrained model. We trained serveral Versions, including ResNet-50, ResNeXt-50, Inception-V3, DenseNet. We trained models with high variance in structure, which leverages aggregation better.
+Temporal cues are represented by optical flow and its variants, and frame difference stacks. The best part of our distributed trainer is we can try as many trainer as we want. 
+Each trainer is equiped with a prefetch queue to preload data from memcache cluster, avoid transform bottleneck. If bottleneck still exists, we can expend memcache cluster.
+
+
+* Aggregator
+Aggregation uses lightwighted post-processing methods to find best model combination, good aggregation may promote more than 10 percents on classification accuracy. So we build the same architecture as feature extraction module. Then evaluation is carried out. This module architecture can accomodate as many aggregation experiments as needed.
+
+	* Fisher Vector
+	(TODO)
+	* Ave pooling
+	(TODO)
+	* max pooling
+	(TODO)
+	* top-k pooling
+	(TODO)
+	* linear weighting
+	(TODO)
+	* attention weighting
+	(TODO)
+	* VLAD
+	(TODO)
+	* compact bilinear pooling
+	(TODO)
+
+* Master Design
+From the requirement above, Master Cluster take response for following tasks:
+a) random sequence generate; b) algorithm image tables maintain; c) use signals to balance different modules; d) online containers management, such as expand or shrink worker containers; e) monitor resources.
+	* memcache
+	(TODO)
+	* Signals
+	(TODO)
+	* k8s
+	(TODO)
 
 
 
 [50] Temporal Segment Networks for Action Recognition in Videos
+[51] Relay Backpropagation for Effective Learning of Deep Convolutional Neural Networks
 
 
 
